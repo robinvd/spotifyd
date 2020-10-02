@@ -27,7 +27,7 @@ serde = { version = "1.0.115", features = ["derive"] }
 serde_ini = "0.2.0"
 sha-1 = "0.9"
 structopt = "0.3.17"
-syslog = "4"
+syslog = "5"
 tokio-core = "0.1"
 tokio-io = "0.1"
 tokio-signal = "0.1"
