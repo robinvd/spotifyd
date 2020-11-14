@@ -19,9 +19,9 @@ use librespot::{
 };
 use log::{info, warn};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-use rspotify::spotify::{
-    client::Spotify, model::offset::for_position, oauth2::TokenInfo as RspotifyToken, senum::*,
-    util::datetime_to_timestamp,
+use rspotify::{
+    client::Spotify, client::SpotifyBuilder, model::enums::RepeatState,
+    model::offset::for_position, oauth2::Token as RspotifyToken, oauth2::TokenBuilder,
 };
 use std::{collections::HashMap, env, rc::Rc, thread};
 use tokio_core::reactor::Handle;
@@ -30,7 +30,7 @@ pub struct DbusServer {
     session: Session,
     handle: Handle,
     spirc: Rc<Spirc>,
-    api_token: RspotifyToken,
+    api_token: Option<RspotifyToken>,
     token_request: Option<Box<dyn Future<Item = LibrespotToken, Error = MercuryError>>>,
     dbus_future: Option<Box<dyn Future<Item = (), Error = ()>>>,
     device_name: String,
@@ -44,6 +44,11 @@ const SCOPE: &str = "user-read-playback-state,user-read-private,\
                      user-read-currently-playing,user-modify-playback-state,\
                      user-read-recently-played";
 
+fn datetime_to_timestamp(elapsed: u32) -> i64 {
+    let utc: DateTime<Utc> = Utc::now();
+    utc.timestamp() + i64::from(elapsed)
+}
+
 impl DbusServer {
     pub fn new(
         session: Session,
@@ -55,7 +60,7 @@ impl DbusServer {
             session,
             handle,
             spirc,
-            api_token: RspotifyToken::default(),
+            api_token: None,
             token_request: None,
             dbus_future: None,
             device_name,
@@ -63,11 +68,11 @@ impl DbusServer {
     }
 
     fn is_token_expired(&self) -> bool {
-        let now: DateTime<Utc> = Utc::now();
-        match self.api_token.expires_at {
-            Some(expires_at) => now.timestamp() > expires_at - 100,
-            None => true,
-        }
+        self.api_token
+            .as_ref()
+            .and_then(|token| token.expires_at)
+            .map(|expires_at| Utc::now().timestamp() > expires_at - 100)
+            .unwrap_or(true)
     }
 }
 
@@ -80,13 +85,18 @@ impl Future for DbusServer {
         if self.is_token_expired() {
             if let Some(ref mut fut) = self.token_request {
                 if let Async::Ready(token) = fut.poll().unwrap() {
-                    self.api_token = RspotifyToken::default()
-                        .access_token(&token.access_token)
-                        .expires_in(token.expires_in)
-                        .expires_at(datetime_to_timestamp(token.expires_in));
+                    self.api_token = Some(
+                        TokenBuilder::default()
+                            .scope("")
+                            .access_token(&token.access_token)
+                            .expires_in(token.expires_in)
+                            .expires_at(datetime_to_timestamp(token.expires_in))
+                            .build()
+                            .unwrap(),
+                    );
                     self.dbus_future = Some(create_dbus_server(
                         self.handle.clone(),
-                        self.api_token.clone(),
+                        self.api_token.clone().unwrap(),
                         self.spirc.clone(),
                         self.device_name.clone(),
                     ));
@@ -111,7 +121,10 @@ impl Future for DbusServer {
 }
 
 fn create_spotify_api(token: &RspotifyToken) -> Spotify {
-    Spotify::default().access_token(&token.access_token).build()
+    SpotifyBuilder::default()
+        .token(token.clone())
+        .build()
+        .unwrap()
 }
 
 fn create_dbus_server(
@@ -358,7 +371,7 @@ fn create_dbus_server(
         .property::<String, _>("PlaybackStatus", ())
         .access(Access::Read)
         .on_get(spotify_api_property!([sp, _device]
-                    if let Ok(Some(player)) = sp.current_playback(None) {
+                    if let Ok(Some(player)) = sp.current_playback(None, None) {
                         let device_name = utf8_percent_encode(&player.device.name, NON_ALPHANUMERIC).to_string();
                         if device_name == _device.unwrap() {
                             if let Ok(Some(track)) = sp.current_user_playing_track() {
@@ -381,7 +394,7 @@ fn create_dbus_server(
         .property::<bool, _>("Shuffle", ())
         .access(Access::Read)
         .on_get(spotify_api_property!([sp, _device]
-            if let Ok(Some(player)) = sp.current_playback(None) {
+            if let Ok(Some(player)) = sp.current_playback(None, None) {
                 player.shuffle_state
             } else {
                 false
@@ -416,7 +429,7 @@ fn create_dbus_server(
         .property::<String, _>("LoopStatus", ())
         .access(Access::Read)
         .on_get(spotify_api_property!([sp, _device]
-            if let Ok(Some(player)) = sp.current_playback(None) {
+            if let Ok(Some(player)) = sp.current_playback(None, None) {
                 match player.repeat_state {
                     RepeatState::Off => "None",
                     RepeatState::Track => "Track",
@@ -432,7 +445,7 @@ fn create_dbus_server(
         .access(Access::Read)
         .on_get(spotify_api_property!([sp, _device]
             if let Ok(Some(pos)) =
-                sp.current_playback(None)
+                sp.current_playback(None, None)
                 .map(|maybe_player| maybe_player.and_then(|p| p.progress_ms)) {
                 i64::from(pos) * 1000
             } else {

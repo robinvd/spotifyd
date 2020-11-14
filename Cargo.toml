@@ -20,9 +20,9 @@ gethostname = "0.2.0"
 hex = "0.4"
 keyring = { version = "0.9.0", optional = true }
 libc = "0.2.73"
-log = "0.4.6"
+log = "0.4.11"
 percent-encoding = "2.1.0"
-rspotify = "0.8.0"
+rspotify = { git = "https://github.com/ramsayleung/rspotify", rev = "423982d6cc465cf7d0666c91bd5608ee3da153ae", features=["client-ureq", "ureq-rustls-tls"], default-features=false}
 serde = { version = "1.0.115", features = ["derive"] }
 sha-1 = "0.9"
 structopt = "0.3.17"
