@@ -155,6 +155,8 @@ jobs:
           command: build
           toolchain: ${{ matrix.rust }}
           args: --locked --release --target ${{ matrix.target }} --no-default-features --features "${{ matrix.feature }},${{ matrix.audio_backend }}"
+        env:
+          PKG_CONFIG_ALLOW_CROSS: 1
       - name: Packaging final binary
         shell: bash
         run: |
